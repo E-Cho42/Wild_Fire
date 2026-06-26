@@ -1,8 +1,8 @@
+import math
 from direct.showbase.ShowBase import ShowBase
-from panda3d.core import GeoMipTerrain, DirectionalLight, AmbientLight
+from panda3d.core import GeoMipTerrain, DirectionalLight, AmbientLight, WindowProperties
 import numpy as np
 from PIL import Image
-import math
 
 class WildfireRenderer(ShowBase):
     def __init__(self, elevation: np.ndarray):
@@ -20,34 +20,82 @@ class WildfireRenderer(ShowBase):
         img = Image.fromarray(normalized.astype(np.uint8))
         img = img.resize((257, 257))
         img.save("heightmap.png")
+        
         terrain = GeoMipTerrain("terrain")
         terrain.setHeightfield("heightmap.png")
         terrain.setBlockSize(64)
         terrain.generate()
+        
+        texture_img = self._create_terrain_texture(elevation)
+        texture_img.save("terrain_texture.png")
+        texture = self.loader.loadTexture("terrain_texture.png")
+        terrain.getRoot().setTexture(texture)
         terrain.getRoot().reparentTo(self.render)
         terrain.getRoot().setSz(100)
 
+    def _create_terrain_texture(self, elevation):
+        elev_min = elevation.min()
+        elev_max = elevation.max()
+        normalized = (elevation - elev_min) / (elev_max - elev_min)
+        color = np.zeros((elevation.shape[0], elevation.shape[1], 3), dtype=np.uint8)
+        
+        low = normalized <= 0.3
+        color[low] = [34, 100, 34]
+        mid = (normalized > 0.3) & (normalized <= 0.6)
+        color[mid] = [101, 67, 33]
+        mid_h = (normalized > 0.6) & (normalized <= 0.85)
+        color[mid_h] = [120, 110, 100]
+        high = normalized > 0.85
+        color[high] = [240, 240, 255]
+        return Image.fromarray(color)
+
     def _setup_camera(self):
         self.disableMouse()
-        self.camera.setPos(128, -200, 150)
-        self.camera.lookAt(128, 128, 0)
-        self.cam_yaw    = 0
-        self.cam_pitch  = -30
-        self.cam_dist   = 300
-        self.cam_target = (128, 128, 0)
+        self.camera.setPos(128, 50, 180)
+        self.camera.setHpr(0, -20, 0)
+        
+        # In Panda3D: Heading (Yaw) revolves around Z. Pitch revolves around X.
+        self.cam_yaw = 0
+        self.cam_pitch = -20
+        self.mouse_captured = False
 
     def _setup_controls(self):
         self.keys = {}
-        for key in ["w", "a", "s", "d", "q", "e", "r", "f"]:
+        for key in ["w", "a", "s", "d", "r", "f"]:
             self.keys[key] = False
             self.accept(key,       self._set_key, [key, True])
             self.accept(key+"-up", self._set_key, [key, False])
 
-        self.accept("mouse1",    self._start_drag)
-        self.accept("mouse1-up", self._stop_drag)
-        self.dragging   = False
-        self.last_mouse = None
-        self.taskMgr.add(self._update_camera, "update_camera")
+        # State toggle events
+        self.accept("escape", self._release_mouse)
+        self.accept("mouse1", self._capture_mouse) # Left click re-enables FPS mode
+
+        # Start with camera captured
+        self._capture_mouse()
+
+        self.taskMgr.add(self.update_camera, "update_camera")
+
+    def _capture_mouse(self):
+        """Hides mouse and locks it into the center for FPS look."""
+        if not self.mouse_captured:
+            props = WindowProperties()
+            props.setCursorHidden(True)
+            # Confine mouse to window if supported by OS
+            props.setMouseMode(WindowProperties.M_confined) 
+            self.win.requestProperties(props)
+            
+            # Reset window center to prevent instant camera snaps on click
+            self.win.movePointer(0, self.win.getXSize() // 2, self.win.getYSize() // 2)
+            self.mouse_captured = True
+
+    def _release_mouse(self):
+        """Unhides mouse and gives control back to desktop."""
+        if self.mouse_captured:
+            props = WindowProperties()
+            props.setCursorHidden(False)
+            props.setMouseMode(WindowProperties.M_absolute)
+            self.win.requestProperties(props)
+            self.mouse_captured = False
 
     def _setup_lighting(self):
         sun = DirectionalLight("sun")
@@ -55,7 +103,7 @@ class WildfireRenderer(ShowBase):
         sun_np = self.render.attachNewNode(sun)
         sun_np.setHpr(45, -45, 0)
         self.render.setLight(sun_np)
-
+        
         ambient = AmbientLight("ambient")
         ambient.setColor((0.3, 0.3, 0.4, 1))
         ambient_np = self.render.attachNewNode(ambient)
@@ -64,47 +112,63 @@ class WildfireRenderer(ShowBase):
     def _set_key(self, key, val):
         self.keys[key] = val
 
-    def _start_drag(self):
-        self.dragging = True
-        self.last_mouse = None
+    def update_camera(self, task):
+        from panda3d.core import Vec3  # Import Vec3 locally if not imported at top
 
-    def _stop_drag(self):
-        self.dragging = False
+        # 1. --- MOUSE LOOK (FPS STYLE) ---
+        if self.mouse_captured and self.mouseWatcherNode.hasMouse():
+            md = self.win.getPointer(0)
+            x = md.getX()
+            y = md.getY()
+            
+            cx = self.win.getXSize() // 2
+            cy = self.win.getYSize() // 2
+            
+            dx = x - cx
+            dy = y - cy
+            
+            sensitivity = 0.15
+            if dx != 0 or dy != 0:
+                self.cam_yaw -= dx * sensitivity
+                self.cam_pitch -= dy * sensitivity
+                self.cam_pitch = max(-89, min(89, self.cam_pitch))
+                
+                self.camera.setHpr(self.cam_yaw, self.cam_pitch, 0)
+                self.win.movePointer(0, cx, cy)
 
-    def _update_camera(self, task):
-        speed = 2.0
-        if self.keys["w"]: self.cam_target = (self.cam_target[0], self.cam_target[1] - speed, self.cam_target[2])
-        if self.keys["s"]: self.cam_target = (self.cam_target[0], self.cam_target[1] + speed, self.cam_target[2])
-        if self.keys["a"]: self.cam_target = (self.cam_target[0] + speed, self.cam_target[1], self.cam_target[2])
-        if self.keys["d"]: self.cam_target = (self.cam_target[0] - speed, self.cam_target[1], self.cam_target[2])
-        if self.keys["q"]: self.cam_dist = max(50,  self.cam_dist - 3)
-        if self.keys["e"]: self.cam_dist = min(600, self.cam_dist + 3)
-        if self.keys["r"]: self.cam_target = (self.cam_target[0], self.cam_target[1], self.cam_target[2] + speed)
-        if self.keys["f"]: self.cam_target = (self.cam_target[0], self.cam_target[1], self.cam_target[2] - speed)
+        # 2. --- KEYBOARD MOVEMENT (FPS STYLE) ---
+        if self.mouse_captured:
+            speed = 2.5
+            
+            # Use Panda3D's native vector system
+            dir_forward = self.render.getRelativeVector(self.camera, Vec3(0, 1, 0))
+            dir_right = self.render.getRelativeVector(self.camera, Vec3(1, 0, 0))
+            
+            # Flatten to prevent flying or sinking while moving forward
+            dir_forward.setZ(0)
+            dir_right.setZ(0)
+            dir_forward.normalize()
+            dir_right.normalize()
 
-        if self.dragging and self.mouseWatcherNode.hasMouse():
-            mx = self.mouseWatcherNode.getMouseX()
-            my = self.mouseWatcherNode.getMouseY()
-            if self.last_mouse:
-                dx = mx - self.last_mouse[0]
-                dy = my - self.last_mouse[1]
-                self.cam_yaw   -= dx * 80
-                self.cam_pitch += dy * 40
-                self.cam_pitch  = max(-80, min(-5, self.cam_pitch))
-            self.last_mouse = (mx, my)
+            # Initialize a native Panda3D Vec3 instead of a numpy array
+            move_vec = Vec3(0, 0, 0)
+            if self.keys["w"]: move_vec += dir_forward
+            if self.keys["s"]: move_vec -= dir_forward
+            if self.keys["a"]: move_vec -= dir_right
+            if self.keys["d"]: move_vec += dir_right
+            
+            # Explicit vertical climbing
+            if self.keys["r"]: move_vec.setZ(move_vec.getZ() + 1)
+            if self.keys["f"]: move_vec.setZ(move_vec.getZ() - 1)
 
-        yaw_r   = math.radians(self.cam_yaw)
-        pitch_r = math.radians(self.cam_pitch)
-        cx = self.cam_target[0] + self.cam_dist * math.cos(pitch_r) * math.sin(yaw_r)
-        cy = self.cam_target[1] + self.cam_dist * math.cos(pitch_r) * math.cos(yaw_r)
-        cz = self.cam_target[2] + self.cam_dist * math.sin(-pitch_r)
-        self.camera.setPos(cx, cy, cz)
-        self.camera.lookAt(*self.cam_target)
+            # Apply movement to current position using Panda3D addition
+            cur_pos = self.camera.getPos()
+            self.camera.setPos(cur_pos + (move_vec * speed))
+
         return task.cont
 
-
-from data_loader import download_elevation
-
-elevation = download_elevation(39.7555, -105.2211)
-app = WildfireRenderer(elevation)
-app.run()
+if __name__ == "__main__":
+    from data_loader import download_elevation
+    elevation = download_elevation(39.7555, -105.2211)
+    app = WildfireRenderer(elevation)
+    app.run()
