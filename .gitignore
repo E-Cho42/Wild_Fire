@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+venv/
+
+# Geospatial data (these files are huge)
+*.tif
+*.tiff
+*.geojson
+data/
+
+# OS
+.DS_Store
