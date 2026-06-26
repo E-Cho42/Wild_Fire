@@ -169,6 +169,6 @@ class WildfireRenderer(ShowBase):
 
 if __name__ == "__main__":
     from data_loader import download_elevation
-    elevation = download_elevation(39.7555, -105.2211)
+    elevation = download_elevation(44.4654, -72.6874)
     app = WildfireRenderer(elevation)
     app.run()
