@@ -3,15 +3,19 @@ from direct.showbase.ShowBase import ShowBase
 from panda3d.core import GeoMipTerrain, DirectionalLight, AmbientLight, WindowProperties
 import numpy as np
 from PIL import Image
+import data_loader
 
 class WildfireRenderer(ShowBase):
-    def __init__(self, elevation: np.ndarray):
+    def __init__(self, elevation: np.ndarray, landcover: np.ndarray):
         ShowBase.__init__(self)
-        self.setBackgroundColor(0.53, 0.70, 0.85, 1)
+        self.elevation = elevation
+        self.landcover = landcover
         self._load_terrain(elevation)
         self._setup_camera()
         self._setup_controls()
         self._setup_lighting()
+        self._place_trees(elevation, self.landcover)
+
 
     def _load_terrain(self, elevation):
         elev_min = elevation.min()
@@ -29,6 +33,7 @@ class WildfireRenderer(ShowBase):
         texture_img = self._create_terrain_texture(elevation)
         texture_img.save("terrain_texture.png")
         texture = self.loader.loadTexture("terrain_texture.png")
+        self.terrain_node = terrain
         terrain.getRoot().setTexture(texture)
         terrain.getRoot().reparentTo(self.render)
         terrain.getRoot().setSz(100)
@@ -48,7 +53,29 @@ class WildfireRenderer(ShowBase):
         high = normalized > 0.85
         color[high] = [240, 240, 255]
         return Image.fromarray(color)
+    
+    def _place_trees(self, elevation, landcover):
+        # Get the actual vertical scale factor of the terrain
+        terrain_z_scale = self.terrain_node.getRoot().getSz()
 
+        for row in range(0, landcover.shape[0], 15):
+            for col in range(0, landcover.shape[1], 15):
+                if landcover[row, col] == 10:
+                    x = col * (257 / landcover.shape[1])
+                    y = row * (257 / landcover.shape[0])
+                    
+                    # Multiply the 0-1 normalized height by the terrain's Z scale
+                    z = self.terrain_node.getElevation(x, y) * terrain_z_scale
+
+                    tree = self.loader.loadModel("models/misc/sphere")
+                    tree.setScale(1.5, 1.5, 4)
+                    tree.setColor(0.05, 0.4, 0.05, 1)
+                    
+                    # Now z matches the actual physical surface of the terrain
+                    tree.setPos(x, y, z) 
+                    tree.setBillboardAxis()
+                    tree.reparentTo(self.render)
+                    
     def _setup_camera(self):
         self.disableMouse()
         self.camera.setPos(128, 50, 180)
@@ -168,7 +195,9 @@ class WildfireRenderer(ShowBase):
         return task.cont
 
 if __name__ == "__main__":
-    from data_loader import download_elevation
-    elevation = download_elevation(44.4654, -72.6874)
-    app = WildfireRenderer(elevation)
+    
+    elevation = data_loader.download_elevation(39.7555, -105.2211)
+    landcover = data_loader.download_landcover(39.7555, -105.2211)
+    landcover = data_loader.align_landcover(landcover, elevation)
+    app = WildfireRenderer(elevation, landcover)
     app.run()
