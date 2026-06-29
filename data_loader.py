@@ -2,6 +2,9 @@ import math
 import elevatr
 import pyproj
 import numpy as np
+import planetary_computer
+import pystac_client
+import rioxarray
 
 def make_bounding_box(lat, long, size_km = 50):
     
@@ -30,8 +33,36 @@ def download_elevation(lat,long,size_km=50):
         print("Not in CO")
         return None
     
+    
+def download_landcover(lat, long , size_km = 50):
+    
+    bounds = make_bounding_box(lat, long, size_km)
+    catalog = pystac_client.Client.open(
+    "https://planetarycomputer.microsoft.com/api/stac/v1",
+    modifier=planetary_computer.sign_inplace
+    )
+    search = catalog.search(
+    collections=["esa-worldcover"],
+    bbox=[bounds["west"], bounds["south"], bounds["east"], bounds["north"]]
+    )
+
+    items = list(search.items())  
+    
+    item = items[0]
+    data = rioxarray.open_rasterio(item.assets["map"].href) 
+    
+    data = data.rio.clip_box(
+    minx=bounds["west"],
+    miny=bounds["south"],
+    maxx=bounds["east"],
+    maxy=bounds["north"]
+    ) 
+    
+    result = np.array(data.data).astype(np.float32)
+    return np.squeeze(result)
+        
 if __name__ == "__main__":
     lat, lon = 44.4654, -72.6874
-    elevation = download_elevation(lat, lon)
-    print("Shape:", elevation.shape)
-    print("Min:", elevation.min(), "Max:", elevation.max())
+    landcover = download_landcover(lat, lon)
+    print("Landcover shape:", landcover.shape)
+    print("Unique values:", np.unique(landcover))
