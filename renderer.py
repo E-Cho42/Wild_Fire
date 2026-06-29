@@ -195,9 +195,10 @@ class WildfireRenderer(ShowBase):
         return task.cont
 
 if __name__ == "__main__":
-    
-    elevation = data_loader.download_elevation(39.7555, -105.2211)
-    landcover = data_loader.download_landcover(39.7555, -105.2211)
+    lat = -43.5231
+    long = 172.5794
+    elevation = data_loader.download_elevation(lat, long)
+    landcover = data_loader.download_landcover(lat, long)
     landcover = data_loader.align_landcover(landcover, elevation)
     app = WildfireRenderer(elevation, landcover)
     app.run()
